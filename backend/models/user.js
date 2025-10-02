@@ -1,40 +1,26 @@
-// models/User.js - User Model
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-
-const addressSchema = new mongoose.Schema({
-  street: { type: String, required: true },
-  city: { type: String, required: true },
-  state: { type: String, required: true },
-  pincode: { type: String, required: true },
-  coordinates: {
-    type: [Number], // [longitude, latitude]
-    index: '2dsphere'
-  }
-});
 
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
     required: [true, 'Name is required'],
     trim: true,
-    maxlength: [50, 'Name must be less than 50 characters']
+    maxlength: [100, 'Name cannot exceed 100 characters']
   },
   email: {
     type: String,
     required: [true, 'Email is required'],
     unique: true,
     lowercase: true,
-    match: [
-      /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
-      'Please enter a valid email address'
-    ]
+    trim: true,
+    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
   },
   password: {
     type: String,
     required: [true, 'Password is required'],
     minlength: [6, 'Password must be at least 6 characters'],
-    select: false // Don't include password in queries by default
+    select: false
   },
   phone: {
     type: String,
@@ -44,11 +30,44 @@ const userSchema = new mongoose.Schema({
   role: {
     type: String,
     enum: ['donor', 'bloodbank', 'hospital', 'admin'],
-    required: [true, 'Role is required']
+    default: 'donor'
+  },
+  bloodGroup: {
+    type: String,
+    enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', null],
+    default: null
+  },
+  dateOfBirth: {
+    type: Date,
+    required: [true, 'Date of birth is required']
   },
   address: {
-    type: addressSchema,
-    required: [true, 'Address is required']
+    street: String,
+    city: String,
+    state: String,
+    pincode: String,
+    country: { type: String, default: 'India' }
+  },
+  emergencyContact: {
+    name: String,
+    phone: String,
+    relationship: String
+  },
+  healthInfo: {
+    weight: Number, // in kg
+    height: Number, // in cm
+    lastDonationDate: Date,
+    isSmoker: { type: Boolean, default: false },
+    hasChronicDisease: { type: Boolean, default: false },
+    medications: [String],
+    allergies: [String]
+  },
+  donorStatus: {
+    isEligible: { type: Boolean, default: true },
+    lastScreeningDate: Date,
+    totalDonations: { type: Number, default: 0 },
+    lastDonationDate: Date,
+    nextEligibleDate: Date
   },
   isActive: {
     type: Boolean,
@@ -58,57 +77,60 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  lastLogin: {
-    type: Date
-  }
+  verificationToken: String,
+  resetPasswordToken: String,
+  resetPasswordExpire: Date,
+  lastLogin: Date
 }, {
   timestamps: true
 });
 
-// Index for geospatial queries
-userSchema.index({ 'address.coordinates': '2dsphere' });
-
 // Hash password before saving
 userSchema.pre('save', async function(next) {
-  // Only hash the password if it has been modified (or is new)
   if (!this.isModified('password')) return next();
   
-  try {
-    // Hash password with cost of 12
-    const salt = await bcrypt.genSalt(12);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
+  this.password = await bcrypt.hash(this.password, 12);
+  next();
 });
 
-// Instance method to check password
+// Compare password method
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Instance method to get public profile
-userSchema.methods.toPublicJSON = function() {
-  const userObject = this.toObject();
-  delete userObject.password;
-  return userObject;
+// Check if donor is eligible to donate
+userSchema.methods.isEligibleToDonate = function() {
+  if (!this.donorStatus.isEligible) return false;
+  if (this.healthInfo.weight < 45) return false;
+  
+  const today = new Date();
+  const age = today.getFullYear() - this.dateOfBirth.getFullYear();
+  if (age < 18 || age > 65) return false;
+  
+  if (this.donorStatus.nextEligibleDate && today < this.donorStatus.nextEligibleDate) {
+    return false;
+  }
+  
+  return true;
 };
 
-// Static method to find users within radius
-userSchema.statics.findNearby = function(coordinates, radius = 10000) {
-  return this.find({
-    'address.coordinates': {
-      $near: {
-        $geometry: {
-          type: 'Point',
-          coordinates: coordinates
-        },
-        $maxDistance: radius // in meters
-      }
-    },
-    isActive: true
-  });
+// Calculate next eligible donation date
+userSchema.methods.calculateNextDonationDate = function() {
+  const nextDate = new Date();
+  nextDate.setDate(nextDate.getDate() + 90); // 3 months gap
+  return nextDate;
+};
+
+// Public profile (exclude sensitive data)
+userSchema.methods.toPublicJSON = function() {
+  const userObject = this.toObject();
+  
+  delete userObject.password;
+  delete userObject.verificationToken;
+  delete userObject.resetPasswordToken;
+  delete userObject.resetPasswordExpire;
+  
+  return userObject;
 };
 
 module.exports = mongoose.model('User', userSchema);

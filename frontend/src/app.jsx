@@ -14,7 +14,7 @@ import Loader from './components/common/Loader';
 import Home from './pages/Home';
 import About from './pages/About';
 import Contact from './pages/Contact';
-import Login from './components/auth/Login';
+import Login from './components/auth/Login'; 
 import Register from './components/auth/Register';
 import Dashboard from './pages/Dashboard';
 import DonorDashboard from './pages/DonorDashboard';
